@@ -18,7 +18,7 @@ namespace DeskFrame
         private static string _assetFileName = "";
         private static string tag_name = "";
         private static int updateCount = 0;
-        public static async Task CheckUpdateAsync(string url, bool showToastIfNoUpdate)
+        public static async Task CheckUpdateAsync(string url, bool isManualCheck)
         {
             _url = url;
             string currentVersion = Process.GetCurrentProcess().MainModule!.FileVersionInfo.FileVersion!.ToString();
@@ -95,17 +95,18 @@ namespace DeskFrame
 
                         if (IsNewerVersion(latestVersion, currentVersion))
                         {
+                            // Có phiên bản mới: Thông báo cho người dùng
                             try
                             {
                                 var toastBuilder = new ToastContentBuilder()
                                      .AddText($"{emoji} New release! {name}", AdaptiveTextStyle.Header)
                                      .AddText(description, AdaptiveTextStyle.Body)
                                      .AddButton(new ToastButton()
-                                         .SetContent("Install")
+                                         .SetContent("Cập nhật ngay")
                                          .AddArgument("action", "install_update")
                                          .SetBackgroundActivation())
                                      .AddButton(new ToastButton()
-                                         .SetContent("Close")
+                                         .SetContent("Để sau")
                                          .AddArgument("action", "close")
                                          .SetBackgroundActivation());
                                 toastBuilder.Show();
@@ -115,46 +116,37 @@ namespace DeskFrame
                                 Debug.WriteLine($"Toast error: {ex.Message}");
                             }
 
-                            // Nếu là kiểm tra thủ công (người dùng bấm nút): hiển thị thêm hộp thoại trực tiếp
-                            if (showToastIfNoUpdate)
+                            // Hiển thị hộp thoại hỏi người dùng cập nhật ngay hoặc để sau
+                            System.Windows.Application.Current.Dispatcher.Invoke(async () =>
                             {
-                                System.Windows.Application.Current.Dispatcher.Invoke(async () =>
-                                {
-                                    var result = System.Windows.MessageBox.Show(
-                                        $"Tìm thấy phiên bản mới: {name} (Bản hiện tại: v{currentVersion})\n\n{description}\n\nBạn có muốn tải và cài đặt bản cập nhật này ngay không?",
-                                        "DeskFrame - Cập nhật",
-                                        MessageBoxButton.YesNo,
-                                        MessageBoxImage.Information);
+                                var result = System.Windows.MessageBox.Show(
+                                    $"Tìm thấy phiên bản mới: {name} (Bản hiện tại: v{currentVersion})\n\n{description}\n\nBạn có muốn cập nhật ngay bây giờ không?",
+                                    "DeskFrame - Cập nhật",
+                                    MessageBoxButton.YesNo,
+                                    MessageBoxImage.Information);
 
-                                    if (result == MessageBoxResult.Yes)
-                                    {
-                                        await InstallUpdate();
-                                    }
+                                if (result == MessageBoxResult.Yes)
+                                {
+                                    await InstallUpdate();
+                                }
+                            });
+                        }
+                        else
+                        {
+                            // Đã là phiên bản mới nhất:
+                            // CHỈ hiển thị thông báo khi người dùng chủ động bấm kiểm tra thủ công.
+                            // Khi tự động kiểm tra ngầm: TUYỆT ĐỐI KHÔNG BÁO GÌ.
+                            if (isManualCheck)
+                            {
+                                System.Windows.Application.Current.Dispatcher.Invoke(() =>
+                                {
+                                    System.Windows.MessageBox.Show(
+                                        $"Bạn đang sử dụng phiên bản mới nhất (v{currentVersion}).",
+                                        "DeskFrame",
+                                        MessageBoxButton.OK,
+                                        MessageBoxImage.Information);
                                 });
                             }
-                        }
-                        else if (showToastIfNoUpdate)
-                        {
-                            try
-                            {
-                                var toastBuilder = new ToastContentBuilder()
-                                   .AddText("You are up to date!", AdaptiveTextStyle.Header)
-                                   .AddText("There is no available update.", AdaptiveTextStyle.Body);
-                                toastBuilder.Show();
-                            }
-                            catch (Exception ex)
-                            {
-                                Debug.WriteLine($"Toast error: {ex.Message}");
-                            }
-
-                            System.Windows.Application.Current.Dispatcher.Invoke(() =>
-                            {
-                                System.Windows.MessageBox.Show(
-                                    $"Bạn đang sử dụng phiên bản mới nhất (v{currentVersion}).",
-                                    "DeskFrame",
-                                    MessageBoxButton.OK,
-                                    MessageBoxImage.Information);
-                            });
                         }
                     }
                 }
@@ -162,16 +154,8 @@ namespace DeskFrame
             }
             catch (Exception e)
             {
-                try
-                {
-                    var toastBuilder = new ToastContentBuilder()
-                               .AddText("Failed to update.", AdaptiveTextStyle.Header)
-                               .AddText(e.Message, AdaptiveTextStyle.Body);
-                    toastBuilder.Show();
-                }
-                catch { }
-
-                if (showToastIfNoUpdate)
+                // CHỈ thông báo lỗi khi người dùng bấm kiểm tra thủ công, tránh quấy rầy khi tự động kiểm tra ngầm
+                if (isManualCheck)
                 {
                     System.Windows.Application.Current.Dispatcher.Invoke(() =>
                     {

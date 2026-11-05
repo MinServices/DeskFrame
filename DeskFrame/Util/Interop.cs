@@ -383,6 +383,120 @@ namespace DeskFrame.Util
             }
         }
 
+        [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+        public struct SHFILEOPSTRUCT64
+        {
+            public IntPtr hwnd;
+            public uint wFunc;
+            public IntPtr pFrom;
+            public IntPtr pTo;
+            public ushort fFlags;
+            [MarshalAs(UnmanagedType.Bool)]
+            public bool fAnyOperationsAborted;
+            public IntPtr hNameMappings;
+            public IntPtr lpszProgressTitle;
+        }
+
+        [StructLayout(LayoutKind.Sequential, Pack = 1, CharSet = CharSet.Unicode)]
+        public struct SHFILEOPSTRUCT32
+        {
+            public IntPtr hwnd;
+            public uint wFunc;
+            public IntPtr pFrom;
+            public IntPtr pTo;
+            public ushort fFlags;
+            [MarshalAs(UnmanagedType.Bool)]
+            public bool fAnyOperationsAborted;
+            public IntPtr hNameMappings;
+            public IntPtr lpszProgressTitle;
+        }
+
+        public const uint FO_DELETE = 0x0003;
+        public const ushort FOF_ALLOWUNDO = 0x0040;
+        public const ushort FOF_WANTNUKEWARNING = 0x4000;
+
+        [DllImport("shell32.dll", CharSet = CharSet.Unicode, EntryPoint = "SHFileOperationW", SetLastError = true)]
+        private static extern int SHFileOperation32(ref SHFILEOPSTRUCT32 lpFileOp);
+
+        [DllImport("shell32.dll", CharSet = CharSet.Unicode, EntryPoint = "SHFileOperationW", SetLastError = true)]
+        private static extern int SHFileOperation64(ref SHFILEOPSTRUCT64 lpFileOp);
+
+        public static bool DeleteFiles(IntPtr hwnd, IEnumerable<string> paths, bool permanent = false)
+        {
+            var pathList = paths?.Where(p => !string.IsNullOrEmpty(p)).ToList();
+            if (pathList == null || pathList.Count == 0) return false;
+
+            int totalChars = 0;
+            foreach (var p in pathList)
+            {
+                totalChars += p.Length + 1;
+            }
+            totalChars += 1;
+
+            IntPtr pFrom = Marshal.AllocHGlobal(totalChars * sizeof(char));
+            try
+            {
+                int offset = 0;
+                foreach (var p in pathList)
+                {
+                    char[] chars = p.ToCharArray();
+                    Marshal.Copy(chars, 0, IntPtr.Add(pFrom, offset * sizeof(char)), chars.Length);
+                    offset += chars.Length;
+                    Marshal.WriteInt16(IntPtr.Add(pFrom, offset * sizeof(char)), 0);
+                    offset++;
+                }
+                Marshal.WriteInt16(IntPtr.Add(pFrom, offset * sizeof(char)), 0);
+
+                ushort flags = permanent ? FOF_WANTNUKEWARNING : (ushort)(FOF_ALLOWUNDO | FOF_WANTNUKEWARNING);
+
+                int result;
+                bool aborted;
+
+                if (IntPtr.Size == 4)
+                {
+                    var op32 = new SHFILEOPSTRUCT32
+                    {
+                        hwnd = hwnd,
+                        wFunc = FO_DELETE,
+                        pFrom = pFrom,
+                        pTo = IntPtr.Zero,
+                        fFlags = flags,
+                        fAnyOperationsAborted = false,
+                        hNameMappings = IntPtr.Zero,
+                        lpszProgressTitle = IntPtr.Zero
+                    };
+                    result = SHFileOperation32(ref op32);
+                    aborted = op32.fAnyOperationsAborted;
+                }
+                else
+                {
+                    var op64 = new SHFILEOPSTRUCT64
+                    {
+                        hwnd = hwnd,
+                        wFunc = FO_DELETE,
+                        pFrom = pFrom,
+                        pTo = IntPtr.Zero,
+                        fFlags = flags,
+                        fAnyOperationsAborted = false,
+                        hNameMappings = IntPtr.Zero,
+                        lpszProgressTitle = IntPtr.Zero
+                    };
+                    result = SHFileOperation64(ref op64);
+                    aborted = op64.fAnyOperationsAborted;
+                }
+
+                return result == 0 && !aborted;
+            }
+            catch
+            {
+                return false;
+            }
+            finally
+            {
+                Marshal.FreeHGlobal(pFrom);
+            }
+        }
+
     }
 
 }

@@ -1,4 +1,4 @@
-using DeskFrame.Core;
+﻿using DeskFrame.Core;
 using DeskFrame.Properties;
 using DeskFrame.Shaders;
 using DeskFrame.Util;
@@ -1473,6 +1473,46 @@ namespace DeskFrame
             {
                 return;
             }
+
+            if (FilterTextBox.IsFocused)
+            {
+                if (e.Key == Key.Escape)
+                {
+                    FilterTextBox.Text = null;
+                    this.Focus();
+                    e.Handled = true;
+                }
+                return;
+            }
+
+            if (e.Key == Key.Delete)
+            {
+                var selected = GetSelectedFileItems();
+                if (selected.Count > 0)
+                {
+                    e.Handled = true;
+                    bool permanent = (Keyboard.Modifiers & ModifierKeys.Shift) == ModifierKeys.Shift;
+                    DeleteSelectedFiles(selected, permanent);
+                }
+                return;
+            }
+
+            if ((Keyboard.Modifiers & ModifierKeys.Control) == ModifierKeys.Control && e.Key == Key.A)
+            {
+                _selectedItems.Clear();
+                foreach (var item in FileItems)
+                {
+                    item.IsSelected = true;
+                    _selectedItems.Add(item);
+                }
+                if (FileListView != null)
+                {
+                    FileListView.SelectAll();
+                }
+                e.Handled = true;
+                return;
+            }
+
             if (e.Key == Key.Escape || !_mouseIsOver)
             {
                 FilterTextBox.Text = null;
@@ -1484,6 +1524,67 @@ namespace DeskFrame
             }
             FilterTextBox.Focus();
             return;
+        }
+
+        private List<FileItem> GetSelectedFileItems()
+        {
+            var list = new HashSet<FileItem>();
+
+            foreach (var item in _selectedItems)
+            {
+                if (item.IsSelected)
+                {
+                    list.Add(item);
+                }
+            }
+
+            foreach (var item in FileItems)
+            {
+                if (item.IsSelected)
+                {
+                    list.Add(item);
+                }
+            }
+
+            if (FileListView?.SelectedItems != null)
+            {
+                foreach (var obj in FileListView.SelectedItems)
+                {
+                    if (obj is FileItem fileItem)
+                    {
+                        list.Add(fileItem);
+                    }
+                }
+            }
+
+            return list.Where(item => !string.IsNullOrEmpty(item.FullPath)).ToList();
+        }
+
+        private void DeleteSelectedFiles(List<FileItem> selected, bool permanent)
+        {
+            if (selected == null || selected.Count == 0) return;
+
+            var hwnd = new WindowInteropHelper(this).Handle;
+            var paths = selected
+                .Select(item => item.FullPath)
+                .Where(p => !string.IsNullOrEmpty(p) && (File.Exists(p) || Directory.Exists(p)))
+                .ToList();
+
+            if (paths.Count == 0) return;
+
+            bool success = Interop.DeleteFiles(hwnd, paths!, permanent);
+            if (success)
+            {
+                var removedList = selected
+                    .Where(item => !string.IsNullOrEmpty(item.FullPath) && !File.Exists(item.FullPath) && !Directory.Exists(item.FullPath))
+                    .ToList();
+
+                foreach (var item in removedList)
+                {
+                    FileItems.Remove(item);
+                    _selectedItems.Remove(item);
+                }
+            }
         }
 
         private async void FilterTextBox_TextChanged(object sender, TextChangedEventArgs e)
@@ -2568,6 +2669,7 @@ namespace DeskFrame
         }
         private void FileListView_MouseLeftButtonDown(object sender, MouseButtonEventArgs e)
         {
+            this.Focus();
             _canAutoClose = false;
             if (sender is not ListView listView)
                 return;
@@ -3187,6 +3289,7 @@ namespace DeskFrame
 
         private void FileItem_LeftMouseButtonDown(object sender, MouseButtonEventArgs e)
         {
+            this.Focus();
             var clickedFileItem = (sender as Border)?.DataContext as FileItem;
 
             if (clickedFileItem != null)

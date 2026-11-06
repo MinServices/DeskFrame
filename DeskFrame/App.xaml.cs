@@ -80,7 +80,7 @@ namespace DeskFrame
             {
                 if (reg.KeyExistsRoot("AutoUpdate") && (bool)reg.ReadKeyValueRoot("AutoUpdate"))
                 {
-                    await Updater.CheckUpdateAsync("https://api.github.com/repos/Min9802/DeskFrame/releases/latest", false);
+                    await Updater.CheckUpdateAsync("https://api.github.com/repos/MinServices/DeskFrame/releases/latest", false);
                 }
             };
             updateTimer.Start();

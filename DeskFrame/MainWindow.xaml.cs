@@ -13,7 +13,7 @@ namespace DeskFrame
 {
     public partial class MainWindow : Window
     {
-        private string url = "https://api.github.com/repos/Min9802/DeskFrame/releases/latest";
+        private string url = "https://api.github.com/repos/MinServices/DeskFrame/releases/latest";
         bool startOnLogin;
         bool reseted = false;
         private uint _taskbarRestartMessage;
@@ -190,7 +190,7 @@ namespace DeskFrame
         {
             try
             {
-                ProcessStartInfo sInfo = new ProcessStartInfo($"https://github.com/Min9802/DeskFrame") { UseShellExecute = true };
+                ProcessStartInfo sInfo = new ProcessStartInfo($"https://github.com/MinServices/DeskFrame") { UseShellExecute = true };
                 _ = Process.Start(sInfo);
             }
             catch

@@ -1,20 +1,44 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <Wix xmlns="http://wixtoolset.org/schemas/v4/wxs"
+     xmlns:util="http://wixtoolset.org/schemas/v4/wxs/util"
      xmlns:ui="http://wixtoolset.org/schemas/v4/wxs/ui">
 
   <Package Name="DeskFrame"
            Manufacturer="Min9802"
-           Version="1.45.0"
+           Version="1.45.1"
            UpgradeCode="7A3F2E19-5C84-4B2D-9D8F-1A6C3E07B452"
            Language="1033"
            InstallerVersion="500">
 
     <MajorUpgrade DowngradeErrorMessage="A newer version of DeskFrame is already installed." AllowSameVersionUpgrades="yes" />
+    <util:CloseApplication Id="CloseDeskFrame"
+                           Target="DeskFrame.exe"
+                           CloseMessage="yes"
+                           PromptToContinue="no"
+                           RebootPrompt="no"
+                           Description="DeskFrame is running and will be closed." />
     <Media Id="1" Cabinet="DeskFrame.cab" EmbedCab="yes" CompressionLevel="high" />
 
     <ui:WixUI Id="WixUI_InstallDir" />
     <WixVariable Id="WixUILicenseRtf" Value="License.rtf" />
     <Property Id="WIXUI_INSTALLDIR" Value="INSTALLFOLDER" />
+
+    <Property Id="WIXUI_EXITDIALOGOPTIONALCHECKBOXTEXT" Value="Launch DeskFrame" />
+    <Property Id="WIXUI_EXITDIALOGOPTIONALCHECKBOX" Value="1" />
+
+    <CustomAction Id="LaunchApplication"
+                  Directory="INSTALLFOLDER"
+                  ExeCommand="&quot;[INSTALLFOLDER]DeskFrame.exe&quot;"
+                  Execute="immediate"
+                  Return="asyncNoWait" />
+
+    <UI>
+      <Publish Dialog="ExitDialog"
+               Control="Finish"
+               Event="DoAction"
+               Value="LaunchApplication"
+               Condition="WIXUI_EXITDIALOGOPTIONALCHECKBOX = 1 and (NOT Installed or WIX_UPGRADE_DETECTED)" />
+    </UI>
 
     <!-- Directory structure -->
     <StandardDirectory Id="ProgramFiles6432Folder">

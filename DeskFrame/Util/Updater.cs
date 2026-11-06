@@ -335,9 +335,10 @@ namespace DeskFrame
                 string scriptContent =
                     "@echo off\r\n" +
                     "timeout /t 2 /nobreak >nul\r\n" +
-                    $"msiexec.exe /i \"{tempPath}\" /passive\r\n" +
+                    $"start /wait msiexec.exe /i \"{tempPath}\" /passive\r\n" +
                     "timeout /t 1 /nobreak >nul\r\n" +
-                    $"start \"\" \"{currentExecutablePath}\"\r\n" +
+                    $"explorer.exe \"{currentExecutablePath}\"\r\n" +
+                    $"if errorlevel 1 start \"\" \"{currentExecutablePath}\"\r\n" +
                     "exit\r\n";
 
                 File.WriteAllText(updateScript, scriptContent, Encoding.UTF8);

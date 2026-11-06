@@ -6,9 +6,9 @@
   
 </div>
 <p align="center">
-  <a href="https://github.com/Min9802/DeskFrame/releases/latest"><img src="https://img.shields.io/github/v/release/Min9802/DeskFrame?logo=github" alt="Version"></a>
-  <a href="https://github.com/Min9802/DeskFrame/releases/latest"><img src="https://img.shields.io/github/downloads/Min9802/DeskFrame/total?color=blue&logo=github" alt="Downloads"></a>
-  <a href="https://github.com/Min9802/DeskFrame/issues"><img src="https://img.shields.io/github/issues/Min9802/DeskFrame?logo=github" alt="Issues"></a>
+  <a href="https://github.com/MinServices/DeskFrame/releases/latest"><img src="https://img.shields.io/github/v/release/MinServices/DeskFrame?logo=github" alt="Version"></a>
+  <a href="https://github.com/MinServices/DeskFrame/releases/latest"><img src="https://img.shields.io/github/downloads/MinServices/DeskFrame/total?color=blue&logo=github" alt="Downloads"></a>
+  <a href="https://github.com/MinServices/DeskFrame/issues"><img src="https://img.shields.io/github/issues/MinServices/DeskFrame?logo=github" alt="Issues"></a>
 </p>
 
 <p align="center">
@@ -69,7 +69,7 @@
 
 ## 🚀 Quick Start
 
-1. [Download the latest release](https://github.com/Min9802/DeskFrame/releases/latest)
+1. [Download the latest release](https://github.com/MinServices/DeskFrame/releases/latest)
 2. Run the executable or install via MSI.
 3. Drag a folder into the frame.
 
@@ -81,7 +81,7 @@
 
 ## 🤝 Contributing
 
-Contributions are welcome! Open an [issue](https://github.com/Min9802/DeskFrame/issues) or submit a [pull request](https://github.com/Min9802/DeskFrame/pulls).
+Contributions are welcome! Open an [issue](https://github.com/MinServices/DeskFrame/issues) or submit a [pull request](https://github.com/MinServices/DeskFrame/pulls).
 
 ## 📝 Important
 

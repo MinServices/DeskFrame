@@ -15,6 +15,7 @@ namespace DeskFrame
     /// </summary>
     public partial class App : Application
     {
+        private static System.Threading.Mutex? _singleInstanceMutex;
         private DispatcherTimer updateTimer;
         public RegistryHelper reg = new RegistryHelper("DeskFrame");
         protected override void OnStartup(StartupEventArgs e)
@@ -43,55 +44,144 @@ namespace DeskFrame
                 string.Equals(arg, "--updated", StringComparison.OrdinalIgnoreCase) ||
                 string.Equals(arg, "--restart", StringComparison.OrdinalIgnoreCase));
 
-            var otherProcesses = Process.GetProcessesByName(currentProcess.ProcessName)
-                .Where(p => p.Id != currentProcess.Id)
-                .ToArray();
-
-            if (otherProcesses.Length > 0)
+            bool createdNew = false;
+            try
             {
-                if (isUpdatedLaunch)
+                _singleInstanceMutex = new System.Threading.Mutex(true, @"Local\DeskFrame_SingleInstance_Mutex", out createdNew);
+            }
+            catch (System.Threading.AbandonedMutexException)
+            {
+                createdNew = true;
+            }
+            catch
+            {
+                createdNew = true;
+            }
+
+            if (isUpdatedLaunch)
+            {
+                var existingProcesses = Process.GetProcessesByName(currentProcess.ProcessName)
+                    .Where(p => p.Id != currentProcess.Id)
+                    .ToArray();
+
+                foreach (var proc in existingProcesses)
+                {
+                    try
+                    {
+                        bool isOlderProcess = true;
+                        try
+                        {
+                            isOlderProcess = proc.StartTime <= currentProcess.StartTime;
+                        }
+                        catch { }
+
+                        if (isOlderProcess)
+                        {
+                            proc.Kill();
+                            proc.WaitForExit(3000);
+                        }
+                    }
+                    catch { }
+                    finally
+                    {
+                        proc.Dispose();
+                    }
+                }
+
+                if (!createdNew && _singleInstanceMutex != null)
+                {
+                    try
+                    {
+                        createdNew = _singleInstanceMutex.WaitOne(3000);
+                    }
+                    catch (System.Threading.AbandonedMutexException)
+                    {
+                        createdNew = true;
+                    }
+                    catch { }
+                }
+
+                if (!createdNew)
+                {
+                    Environment.Exit(0);
+                    return;
+                }
+            }
+            else if (createdNew)
+            {
+                var otherProcesses = Process.GetProcessesByName(currentProcess.ProcessName)
+                    .Where(p => p.Id != currentProcess.Id)
+                    .ToArray();
+
+                foreach (var proc in otherProcesses)
+                {
+                    try
+                    {
+                        if ((currentProcess.StartTime - proc.StartTime).TotalSeconds > 2)
+                        {
+                            proc.Kill();
+                            proc.WaitForExit(2000);
+                        }
+                    }
+                    catch { }
+                    finally
+                    {
+                        proc.Dispose();
+                    }
+                }
+            }
+            else
+            {
+                bool isConcurrentLaunch = false;
+                var otherProcesses = Process.GetProcessesByName(currentProcess.ProcessName)
+                    .Where(p => p.Id != currentProcess.Id)
+                    .ToArray();
+
+                if (otherProcesses.Length == 0)
+                {
+                    isConcurrentLaunch = true;
+                }
+                else
                 {
                     foreach (var proc in otherProcesses)
                     {
                         try
                         {
-                            proc.Kill();
-                            proc.WaitForExit(3000);
+                            if (Math.Abs((currentProcess.StartTime - proc.StartTime).TotalSeconds) <= 15)
+                            {
+                                isConcurrentLaunch = true;
+                            }
                         }
-                        catch { }
+                        catch
+                        {
+                            isConcurrentLaunch = true;
+                        }
                         finally
                         {
                             proc.Dispose();
                         }
                     }
                 }
-                else
+
+                if (isConcurrentLaunch)
                 {
-                    System.Threading.Thread.Sleep(500);
-                    foreach (var p in otherProcesses) p.Dispose();
+                    Environment.Exit(0);
+                    return;
+                }
 
-                    otherProcesses = Process.GetProcessesByName(currentProcess.ProcessName)
-                        .Where(p => p.Id != currentProcess.Id)
-                        .ToArray();
+                var dialog = new Wpf.Ui.Controls.MessageBox
+                {
+                    Title = "DeskFrame",
+                    Content = Lang.DeskFrame_AlreadyRunning,
+                };
 
-                    if (otherProcesses.Length > 0)
-                    {
-                        foreach (var p in otherProcesses) p.Dispose();
+                var result = dialog.ShowDialogAsync();
 
-                        var dialog = new Wpf.Ui.Controls.MessageBox
-                        {
-                            Title = "DeskFrame",
-                            Content = Lang.DeskFrame_AlreadyRunning,
-                        };
-
-                        var result = dialog.ShowDialogAsync();
-
-                        if (result.Result == Wpf.Ui.Controls.MessageBoxResult.None)
-                        {
-                            Application.Current.Shutdown();
-                            return;
-                        }
-                    }
+                if (result.Result == Wpf.Ui.Controls.MessageBoxResult.None)
+                {
+                    Application.Current.Shutdown();
+                    Environment.Exit(0);
+                    return;
                 }
             }
 #endif

@@ -5,7 +5,7 @@
 
   <Package Name="DeskFrame"
            Manufacturer="Min9802"
-           Version="1.45.3"
+           Version="1.45.4"
            UpgradeCode="7A3F2E19-5C84-4B2D-9D8F-1A6C3E07B452"
            Language="1033"
            InstallerVersion="500">
@@ -34,8 +34,16 @@
                   Execute="immediate"
                   Return="ignore" />
 
+    <CustomAction Id="KillRunningDeskFrameDeferred"
+                  Directory="System64Folder"
+                  ExeCommand="taskkill.exe /F /IM DeskFrame.exe /T"
+                  Execute="deferred"
+                  Impersonate="no"
+                  Return="ignore" />
+
     <InstallExecuteSequence>
       <Custom Action="KillRunningDeskFrame" Before="InstallValidate" />
+      <Custom Action="KillRunningDeskFrameDeferred" Before="InstallFiles" />
     </InstallExecuteSequence>
 
     <CustomAction Id="LaunchApplication"

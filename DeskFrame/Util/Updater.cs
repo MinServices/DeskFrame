@@ -338,7 +338,10 @@ namespace DeskFrame
                     "taskkill /F /IM DeskFrame.exe /T >nul 2>&1\r\n" +
                     $"start /wait msiexec.exe /i \"{tempPath}\" /passive\r\n" +
                     "timeout /t 1 /nobreak >nul\r\n" +
-                    $"start \"\" \"{currentExecutablePath}\" --updated\r\n" +
+                    $"explorer.exe \"{currentExecutablePath}\"\r\n" +
+                    "timeout /t 2 /nobreak >nul\r\n" +
+                    "tasklist /FI \"IMAGENAME eq DeskFrame.exe\" 2>nul | find /I \"DeskFrame.exe\" >nul\r\n" +
+                    $"if errorlevel 1 start \"\" \"{currentExecutablePath}\" --updated\r\n" +
                     "exit\r\n";
 
                 File.WriteAllText(updateScript, scriptContent, Encoding.UTF8);

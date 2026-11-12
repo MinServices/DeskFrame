@@ -5,7 +5,7 @@
 
   <Package Name="DeskFrame"
            Manufacturer="Min9802"
-           Version="1.45.2"
+           Version="1.45.3"
            UpgradeCode="7A3F2E19-5C84-4B2D-9D8F-1A6C3E07B452"
            Language="1033"
            InstallerVersion="500">
@@ -14,6 +14,8 @@
     <util:CloseApplication Id="CloseDeskFrame"
                            Target="DeskFrame.exe"
                            CloseMessage="yes"
+                           TerminateProcess="0"
+                           Timeout="1"
                            PromptToContinue="no"
                            RebootPrompt="no"
                            Description="DeskFrame is running and will be closed." />
@@ -26,9 +28,19 @@
     <Property Id="WIXUI_EXITDIALOGOPTIONALCHECKBOXTEXT" Value="Launch DeskFrame" />
     <Property Id="WIXUI_EXITDIALOGOPTIONALCHECKBOX" Value="1" />
 
+    <CustomAction Id="KillRunningDeskFrame"
+                  Directory="System64Folder"
+                  ExeCommand="taskkill.exe /F /IM DeskFrame.exe /T"
+                  Execute="immediate"
+                  Return="ignore" />
+
+    <InstallExecuteSequence>
+      <Custom Action="KillRunningDeskFrame" Before="InstallValidate" />
+    </InstallExecuteSequence>
+
     <CustomAction Id="LaunchApplication"
                   Directory="INSTALLFOLDER"
-                  ExeCommand="&quot;[INSTALLFOLDER]DeskFrame.exe&quot;"
+                  ExeCommand="&quot;[INSTALLFOLDER]DeskFrame.exe&quot; --updated"
                   Execute="immediate"
                   Return="asyncNoWait" />
 
@@ -37,10 +49,11 @@
                Control="Finish"
                Event="DoAction"
                Value="LaunchApplication"
-               Condition="WIXUI_EXITDIALOGOPTIONALCHECKBOX = 1 and (NOT Installed or WIX_UPGRADE_DETECTED)" />
+               Condition="WIXUI_EXITDIALOGOPTIONALCHECKBOX = 1" />
     </UI>
 
     <!-- Directory structure -->
+    <StandardDirectory Id="System64Folder" />
     <StandardDirectory Id="ProgramFiles6432Folder">
       <Directory Id="INSTALLFOLDER" Name="DeskFrame" />
     </StandardDirectory>

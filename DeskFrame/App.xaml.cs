@@ -1,7 +1,9 @@
 using DeskFrame.Properties;
 using Microsoft.Toolkit.Uwp.Notifications;
 using Microsoft.Win32;
+using System;
 using System.Diagnostics;
+using System.Linq;
 using System.Windows;
 using System.Windows.Threading;
 using Application = System.Windows.Application;
@@ -36,20 +38,60 @@ namespace DeskFrame
             }
 
 #if !DEBUG
-            if (Process.GetProcessesByName(Process.GetCurrentProcess().ProcessName).Length > 1)
+            var currentProcess = Process.GetCurrentProcess();
+            bool isUpdatedLaunch = e.Args != null && Array.Exists(e.Args, arg =>
+                string.Equals(arg, "--updated", StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(arg, "--restart", StringComparison.OrdinalIgnoreCase));
+
+            var otherProcesses = Process.GetProcessesByName(currentProcess.ProcessName)
+                .Where(p => p.Id != currentProcess.Id)
+                .ToArray();
+
+            if (otherProcesses.Length > 0)
             {
-
-                var dialog = new Wpf.Ui.Controls.MessageBox
+                if (isUpdatedLaunch)
                 {
-                    Title = "DeskFrame",
-                    Content = Lang.DeskFrame_AlreadyRunning,
-                };
-
-                var result = dialog.ShowDialogAsync();
-
-                if (result.Result == Wpf.Ui.Controls.MessageBoxResult.None)
+                    foreach (var proc in otherProcesses)
+                    {
+                        try
+                        {
+                            proc.Kill();
+                            proc.WaitForExit(3000);
+                        }
+                        catch { }
+                        finally
+                        {
+                            proc.Dispose();
+                        }
+                    }
+                }
+                else
                 {
-                    Application.Current.Shutdown();
+                    System.Threading.Thread.Sleep(500);
+                    foreach (var p in otherProcesses) p.Dispose();
+
+                    otherProcesses = Process.GetProcessesByName(currentProcess.ProcessName)
+                        .Where(p => p.Id != currentProcess.Id)
+                        .ToArray();
+
+                    if (otherProcesses.Length > 0)
+                    {
+                        foreach (var p in otherProcesses) p.Dispose();
+
+                        var dialog = new Wpf.Ui.Controls.MessageBox
+                        {
+                            Title = "DeskFrame",
+                            Content = Lang.DeskFrame_AlreadyRunning,
+                        };
+
+                        var result = dialog.ShowDialogAsync();
+
+                        if (result.Result == Wpf.Ui.Controls.MessageBoxResult.None)
+                        {
+                            Application.Current.Shutdown();
+                            return;
+                        }
+                    }
                 }
             }
 #endif

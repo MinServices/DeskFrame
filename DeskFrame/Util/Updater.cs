@@ -334,11 +334,11 @@ namespace DeskFrame
                 string updateScript = Path.Combine(Path.GetTempPath(), "deskframe_msi_update.cmd");
                 string scriptContent =
                     "@echo off\r\n" +
-                    "timeout /t 2 /nobreak >nul\r\n" +
+                    "timeout /t 1 /nobreak >nul\r\n" +
+                    "taskkill /F /IM DeskFrame.exe /T >nul 2>&1\r\n" +
                     $"start /wait msiexec.exe /i \"{tempPath}\" /passive\r\n" +
                     "timeout /t 1 /nobreak >nul\r\n" +
-                    $"explorer.exe \"{currentExecutablePath}\"\r\n" +
-                    $"if errorlevel 1 start \"\" \"{currentExecutablePath}\"\r\n" +
+                    $"start \"\" \"{currentExecutablePath}\" --updated\r\n" +
                     "exit\r\n";
 
                 File.WriteAllText(updateScript, scriptContent, Encoding.UTF8);
@@ -361,11 +361,12 @@ namespace DeskFrame
                 {
                     Debug.WriteLine($"User canceled elevation or error launching MSI updater: {ex.Message}");
                     Process.Start(new ProcessStartInfo(tempPath) { UseShellExecute = true });
+                    Environment.Exit(0);
                 }
             }
             else
             {
-                string command = $"timeout /t 2 && move /y \"{tempPath}\" \"{currentExecutablePath}\" & \"{currentExecutablePath}\" && exit ";
+                string command = $"timeout /t 1 /nobreak >nul & taskkill /F /IM DeskFrame.exe /T >nul 2>&1 & move /y \"{tempPath}\" \"{currentExecutablePath}\" & start \"\" \"{currentExecutablePath}\" --updated & exit";
 
                 if (HasPermissionToWrite(currentExecutablePath))
                 {

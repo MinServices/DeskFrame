@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
@@ -148,6 +148,12 @@ namespace DeskFrame.Util
                 FreePIDLs(_arrPIDLs);
                 _arrPIDLs = null;
             }
+
+            try
+            {
+                Interop.CoFreeUnusedLibraries();
+            }
+            catch { }
         }
         #endregion
 

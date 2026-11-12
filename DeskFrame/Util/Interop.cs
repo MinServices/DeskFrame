@@ -1,4 +1,4 @@
-﻿using Microsoft.Win32.SafeHandles;
+using Microsoft.Win32.SafeHandles;
 using System;
 using System.Collections;
 using System.Collections.Generic;
@@ -308,6 +308,9 @@ namespace DeskFrame.Util
 
         [DllImport("shell32.dll", CharSet = CharSet.Auto)]
         public static extern IntPtr SHGetFileInfo(string pszPath, uint dwFileAttributes, ref SHFILEINFO psfi, uint cbFileInfo, uint uFlags);
+
+        [DllImport("ole32.dll")]
+        public static extern void CoFreeUnusedLibraries();
 
 
         public const uint SEE_MASK_INVOKEIDLIST = 0x0000000C;

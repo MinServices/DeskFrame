@@ -1,4 +1,4 @@
-﻿using DeskFrame.Core;
+using DeskFrame.Core;
 using DeskFrame.Properties;
 using DeskFrame.Shaders;
 using DeskFrame.Util;
@@ -119,6 +119,15 @@ namespace DeskFrame
                 catch (Exception ex)
                 {
                     request.Tcs.SetException(ex);
+                }
+
+                if (_thumbnailQueue.Count == 0)
+                {
+                    try
+                    {
+                        Interop.CoFreeUnusedLibraries();
+                    }
+                    catch { }
                 }
             }
         }
@@ -2177,9 +2186,11 @@ namespace DeskFrame
             {
                 if (_parentWatcher != null)
                 {
+                    _parentWatcher.EnableRaisingEvents = false;
                     _parentWatcher.Created -= OnParentChanged;
                     _parentWatcher.Deleted -= OnParentChanged;
                     _parentWatcher.Renamed -= OnParentRenamed;
+                    _parentWatcher.Dispose();
                 }
                 _parentWatcher = new FileSystemWatcher(Path.GetDirectoryName(Instance.Folder))
                 {
@@ -2205,10 +2216,12 @@ namespace DeskFrame
             {
                 if (_fileWatcher != null)
                 {
+                    _fileWatcher.EnableRaisingEvents = false;
                     _fileWatcher.Created -= OnFileChanged;
                     _fileWatcher.Deleted -= OnFileChanged;
                     _fileWatcher.Renamed -= OnFileRenamed;
                     _fileWatcher.Changed -= OnFileChanged;
+                    _fileWatcher.Dispose();
                 }
                 _fileWatcher = new FileSystemWatcher(_currentFolderPath)
                 {
@@ -2880,33 +2893,43 @@ namespace DeskFrame
                                 shortcutPath = Path.Combine(targetFolder, $"{cleanName} ({counter++}).lnk");
                             }
 
-                            WshShell shell = new WshShell();
-                            IWshShortcut shortcut = (IWshShortcut)shell.CreateShortcut(shortcutPath);
+                            WshShell? shell = null;
+                            IWshShortcut? shortcut = null;
+                            try
+                            {
+                                shell = new WshShell();
+                                shortcut = (IWshShortcut)shell.CreateShortcut(shortcutPath);
 
-                            if (vItem.IsFileSystem && !string.IsNullOrEmpty(vItem.FileSystemPath))
-                            {
-                                // Filesystem item (e.g. user profile folder) - point directly
-                                shortcut.TargetPath = vItem.FileSystemPath;
-                                DropLog($"  Creating FS shortcut -> '{vItem.FileSystemPath}'");
-                            }
-                            else
-                            {
-                                // Virtual shell item - use explorer.exe shell:::{CLSID}
-                                shortcut.TargetPath = @"C:\Windows\explorer.exe";
-                                shortcut.Arguments = vItem.ParsingPath;
-                                DropLog($"  Creating virtual shortcut -> explorer.exe {vItem.ParsingPath}");
-                            }
+                                if (vItem.IsFileSystem && !string.IsNullOrEmpty(vItem.FileSystemPath))
+                                {
+                                    // Filesystem item (e.g. user profile folder) - point directly
+                                    shortcut.TargetPath = vItem.FileSystemPath;
+                                    DropLog($"  Creating FS shortcut -> '{vItem.FileSystemPath}'");
+                                }
+                                else
+                                {
+                                    // Virtual shell item - use explorer.exe shell:::{CLSID}
+                                    shortcut.TargetPath = @"C:\Windows\explorer.exe";
+                                    shortcut.Arguments = vItem.ParsingPath;
+                                    DropLog($"  Creating virtual shortcut -> explorer.exe {vItem.ParsingPath}");
+                                }
 
-                            if (!string.IsNullOrEmpty(vItem.IconLocation))
-                            {
-                                shortcut.IconLocation = vItem.IconLocation;
+                                if (!string.IsNullOrEmpty(vItem.IconLocation))
+                                {
+                                    shortcut.IconLocation = vItem.IconLocation;
+                                }
+                                else
+                                {
+                                    shortcut.IconLocation = @"C:\Windows\System32\shell32.dll,0";
+                                }
+                                shortcut.Save();
+                                DropLog($"  Shortcut saved: '{shortcutPath}' exists={File.Exists(shortcutPath)}");
                             }
-                            else
+                            finally
                             {
-                                shortcut.IconLocation = @"C:\Windows\System32\shell32.dll,0";
+                                if (shortcut != null) { try { Marshal.FinalReleaseComObject(shortcut); } catch { } }
+                                if (shell != null) { try { Marshal.FinalReleaseComObject(shell); } catch { } }
                             }
-                            shortcut.Save();
-                            DropLog($"  Shortcut saved: '{shortcutPath}' exists={File.Exists(shortcutPath)}");
                         }
                     }
                     LoadFiles(_currentFolderPath);
@@ -3026,10 +3049,12 @@ namespace DeskFrame
             if (string.IsNullOrEmpty(shortcutPath) || !File.Exists(shortcutPath)) return false;
             if (!Path.GetExtension(shortcutPath).Equals(".lnk", StringComparison.OrdinalIgnoreCase)) return false;
 
+            WshShell? shell = null;
+            IWshShortcut? shortcut = null;
             try
             {
-                WshShell shell = new WshShell();
-                IWshShortcut shortcut = (IWshShortcut)shell.CreateShortcut(shortcutPath);
+                shell = new WshShell();
+                shortcut = (IWshShortcut)shell.CreateShortcut(shortcutPath);
                 targetPath = shortcut.TargetPath?.Trim() ?? string.Empty;
                 arguments = shortcut.Arguments?.Trim() ?? string.Empty;
                 workingDirectory = shortcut.WorkingDirectory?.Trim() ?? string.Empty;
@@ -3038,6 +3063,11 @@ namespace DeskFrame
             catch
             {
                 return false;
+            }
+            finally
+            {
+                if (shortcut != null) { try { Marshal.FinalReleaseComObject(shortcut); } catch { } }
+                if (shell != null) { try { Marshal.FinalReleaseComObject(shell); } catch { } }
             }
         }
 
@@ -3157,10 +3187,12 @@ namespace DeskFrame
                 shortcutPath = Path.Combine(folder, $"{cleanName} ({counter++}).lnk");
             }
 
+            WshShell? shell = null;
+            IWshShortcut? shortcut = null;
             try
             {
-                WshShell shell = new WshShell();
-                IWshShortcut shortcut = (IWshShortcut)shell.CreateShortcut(shortcutPath);
+                shell = new WshShell();
+                shortcut = (IWshShortcut)shell.CreateShortcut(shortcutPath);
                 shortcut.TargetPath = @"C:\Windows\explorer.exe";
 
                 if (!clsid.StartsWith("shell:::", StringComparison.OrdinalIgnoreCase))
@@ -3188,6 +3220,11 @@ namespace DeskFrame
             {
                 Debug.WriteLine("Error creating system shortcut: " + ex.Message);
                 return false;
+            }
+            finally
+            {
+                if (shortcut != null) { try { Marshal.FinalReleaseComObject(shortcut); } catch { } }
+                if (shell != null) { try { Marshal.FinalReleaseComObject(shell); } catch { } }
             }
         }
 
@@ -3272,19 +3309,29 @@ namespace DeskFrame
                 shortcutPath = Path.Combine(folder, $"{nameNoExt} ({fileCounter++}).lnk");
             }
 
-            WshShell shell = new WshShell();
-            IWshShortcut shortcut = (IWshShortcut)shell.CreateShortcut(shortcutPath);
-
-            shortcut.TargetPath = filePath;
-            shortcut.WorkingDirectory = Path.GetDirectoryName(filePath);
+            WshShell? shell = null;
+            IWshShortcut? shortcut = null;
             try
             {
-                shortcut.Description = Path.GetFileName(filePath);
+                shell = new WshShell();
+                shortcut = (IWshShortcut)shell.CreateShortcut(shortcutPath);
+
+                shortcut.TargetPath = filePath;
+                shortcut.WorkingDirectory = Path.GetDirectoryName(filePath);
+                try
+                {
+                    shortcut.Description = Path.GetFileName(filePath);
+                }
+                catch
+                {
+                }
+                shortcut.Save();
             }
-            catch
+            finally
             {
+                if (shortcut != null) { try { Marshal.FinalReleaseComObject(shortcut); } catch { } }
+                if (shell != null) { try { Marshal.FinalReleaseComObject(shell); } catch { } }
             }
-            shortcut.Save();
         }
 
         private void FileItem_LeftMouseButtonDown(object sender, MouseButtonEventArgs e)
@@ -3778,6 +3825,12 @@ namespace DeskFrame
             }
         }
 
+        private static readonly HashSet<string> _mediaExtensions = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+        {
+            ".jpg", ".jpeg", ".png", ".bmp", ".gif", ".ico", ".webp", ".tif", ".tiff", ".heic",
+            ".mp4", ".mkv", ".avi", ".mov", ".wmv", ".flv", ".webm", ".m4v"
+        };
+
         public BitmapSource? GetThumbnail(string filePath, int size)
         {
             return GetThumbnailInternal(filePath, size);
@@ -3791,6 +3844,26 @@ namespace DeskFrame
                 {
                     ShellThumbnail shellThumbnail = shellObject.Thumbnail;
                     shellThumbnail.CurrentSize = new System.Windows.Size(size, size);
+
+                    string ext = Path.GetExtension(filePath);
+                    bool isMedia = false;
+                    if (string.Equals(ext, ".lnk", StringComparison.OrdinalIgnoreCase))
+                    {
+                        if (GetShortcutDetails(filePath, out string target, out _, out _) && !string.IsNullOrEmpty(target))
+                        {
+                            isMedia = _mediaExtensions.Contains(Path.GetExtension(target));
+                        }
+                    }
+                    else
+                    {
+                        isMedia = _mediaExtensions.Contains(ext);
+                    }
+
+                    if (!isMedia)
+                    {
+                        shellThumbnail.FormatOption = ShellThumbnailFormatOption.IconOnly;
+                    }
+
                     BitmapSource thumbnail = shellThumbnail.BitmapSource;
                     thumbnail.Freeze();
                     return thumbnail;
@@ -5150,6 +5223,20 @@ namespace DeskFrame
         private void Window_Closing(object sender, CancelEventArgs e)
         {
             Instance.isWindowClosing = true;
+            try
+            {
+                if (_fileWatcher != null)
+                {
+                    _fileWatcher.EnableRaisingEvents = false;
+                    _fileWatcher.Dispose();
+                }
+                if (_parentWatcher != null)
+                {
+                    _parentWatcher.EnableRaisingEvents = false;
+                    _parentWatcher.Dispose();
+                }
+            }
+            catch { }
         }
 
         #region Virtual Shell Item Helpers (This PC, Recycle Bin, Control Panel, etc.)

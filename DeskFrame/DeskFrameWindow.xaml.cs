@@ -591,7 +591,20 @@ namespace DeskFrame
         }
         private IntPtr WndProc(IntPtr hWnd, int msg, IntPtr wParam, IntPtr lParam, ref bool handled)
         {
-            if (!(HwndSource.FromHwnd(hWnd).RootVisual is Window rootVisual))
+            try
+            {
+            if (msg == 0x031E) // WM_DWMCOMPOSITIONCHANGED
+            {
+                // Prevent WPF WindowChromeWorker._HandleDwmCompositionChanged from throwing COMException (0x80263001)
+                // when dwm.exe crashes and Desktop Composition is temporarily disabled.
+                if (!Interop.IsDwmCompositionEnabled())
+                {
+                    handled = true;
+                    return IntPtr.Zero;
+                }
+            }
+
+            if (HwndSource.FromHwnd(hWnd)?.RootVisual is not Window rootVisual)
                 return IntPtr.Zero;
           
             if (msg == 0x0005) // WM_SIZE
@@ -618,30 +631,39 @@ namespace DeskFrame
                 else if (delta > 0) Instance.IconSize += 4;
                 Task.Run(async () =>
                 {
-                    await Task.Delay(500, token);
-                    if (!token.IsCancellationRequested)
+                    try
                     {
-                        Dispatcher.Invoke(() =>
+                        await Task.Delay(500, token);
+                        if (!token.IsCancellationRequested)
                         {
-                            LoadingProgressRingFade(true);
-                        });
-                        foreach (var item in FileItems)
-                        {
-                            item.Thumbnail = await GetThumbnailAsync(item.FullPath!);
-                        }
-                        Dispatcher.Invoke(() =>
-                        {
-                            FileWrapPanel.Items.Refresh();
-                            Task.Run(async () =>
+                            Dispatcher.Invoke(() =>
                             {
-                                await Task.Delay(200, token);
-                                Dispatcher.Invoke(() =>
+                                LoadingProgressRingFade(true);
+                            });
+                            foreach (var item in FileItems.ToList())
+                            {
+                                if (token.IsCancellationRequested) break;
+                                item.Thumbnail = await GetThumbnailAsync(item.FullPath!);
+                            }
+                            Dispatcher.Invoke(() =>
+                            {
+                                FileWrapPanel.Items.Refresh();
+                                Task.Run(async () =>
                                 {
-                                    LoadingProgressRingFade(false);
+                                    try
+                                    {
+                                        await Task.Delay(200, token);
+                                        Dispatcher.Invoke(() =>
+                                        {
+                                            LoadingProgressRingFade(false);
+                                        });
+                                    }
+                                    catch { }
                                 });
                             });
-                        });
+                        }
                     }
+                    catch { }
                 });
                 handled = true;
                 return 4;
@@ -958,6 +980,11 @@ namespace DeskFrame
                 msg == 0x0003) // WM_MOVE
             {
                 SnapToGrid();
+            }
+            }
+            catch (Exception ex)
+            {
+                App.LogCrashShield("DeskFrameWindow.WndProc", ex);
             }
 
             return IntPtr.Zero;
@@ -1350,52 +1377,108 @@ namespace DeskFrame
             border.CornerRadius = new CornerRadius(topLeft, topRight, bottomLeft, bottomRight);
         }
 
+        private static IntPtr FindShellDefViewHandle()
+        {
+            try
+            {
+                IntPtr progman = FindWindow("Progman", null);
+                if (progman != IntPtr.Zero)
+                {
+                    IntPtr defView = FindWindowEx(progman, IntPtr.Zero, "SHELLDLL_DefView", null);
+                    if (defView != IntPtr.Zero && IsWindow(defView))
+                        return defView;
+                }
+
+                IntPtr found = IntPtr.Zero;
+                EnumWindows((tophandle, _) =>
+                {
+                    IntPtr shellViewIntPtr = FindWindowEx(tophandle, IntPtr.Zero, "SHELLDLL_DefView", null);
+                    if (shellViewIntPtr != IntPtr.Zero && IsWindow(shellViewIntPtr))
+                    {
+                        found = shellViewIntPtr;
+                        return false;
+                    }
+                    return true;
+                }, IntPtr.Zero);
+                return found;
+            }
+            catch
+            {
+                return IntPtr.Zero;
+            }
+        }
+
         private void SetAsDesktopChild()
         {
-            while (true)
+            try
             {
-                while (shellView == IntPtr.Zero)
+                if (shellView != IntPtr.Zero && !IsWindow(shellView))
                 {
-                    EnumWindows((tophandle, _) =>
-                    {
-                        IntPtr shellViewIntPtr = FindWindowEx(tophandle, IntPtr.Zero, "SHELLDLL_DefView", null);
-                        if (shellViewIntPtr != IntPtr.Zero)
-                        {
-                            shellView = shellViewIntPtr;
-                            return false;
-                        }
-                        return true;
-                    }, IntPtr.Zero);
+                    shellView = IntPtr.Zero;
                 }
-                if (shellView == IntPtr.Zero) Thread.Sleep(1000);
-                else break;
+
+                if (shellView == IntPtr.Zero)
+                {
+                    shellView = FindShellDefViewHandle();
+                }
+
+                if (shellView == IntPtr.Zero)
+                {
+                    // Explorer.exe may be restarting; retry asynchronously without freezing UI thread or crashing
+                    if (Instance.Name != "empty")
+                    {
+                        _ = Task.Run(async () =>
+                        {
+                            for (int i = 0; i < 15; i++)
+                            {
+                                await Task.Delay(500);
+                                IntPtr handle = FindShellDefViewHandle();
+                                if (handle != IntPtr.Zero)
+                                {
+                                    shellView = handle;
+                                    _ = Dispatcher.InvokeAsync(() =>
+                                    {
+                                        try { SetAsDesktopChild(); } catch { }
+                                    });
+                                    break;
+                                }
+                            }
+                        });
+                    }
+                    return;
+                }
+
+                var interopHelper = new WindowInteropHelper(this);
+                interopHelper.EnsureHandle();
+                IntPtr hwnd = interopHelper.Handle;
+                if (hwnd == IntPtr.Zero || !IsWindow(hwnd)) return;
+
+                SetParent(hwnd, shellView);
+
+                int style = (int)GetWindowLong(hwnd, GWL_STYLE);
+                style &= ~WS_POPUP; // remove flag, to make sure it doesn't interfere
+                style |= WS_CHILD; // add flag
+                SetWindowLong(hwnd, GWL_STYLE, style);
+
+                // convert coords to parent-relative coords
+                uint dpi = GetDpiForWindow(hwnd);
+                _windowsScalingFactor = dpi > 0 ? dpi / 96.0 : 1.0;
+                POINT pt = new POINT
+                {
+                    X = (int)(Instance.PosX * _windowsScalingFactor),
+                    Y = (int)(Instance.PosY * _windowsScalingFactor)
+                };
+                ScreenToClient(shellView, ref pt);
+
+                SetWindowPos(hwnd, IntPtr.Zero,
+                             pt.X, pt.Y,
+                             0, 0,
+                             SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_SHOWWINDOW);
             }
-            if (shellView == IntPtr.Zero) throw new InvalidOperationException("SHELLDLL_DefView not found.");
-
-            var interopHelper = new WindowInteropHelper(this);
-            interopHelper.EnsureHandle();
-            IntPtr hwnd = interopHelper.Handle;
-            SetParent(hwnd, shellView);
-
-            int style = (int)GetWindowLong(hwnd, GWL_STYLE);
-            style &= ~WS_POPUP; // remove flag, to make sure it doesn't interfere
-            style |= WS_CHILD; // add flag
-            SetWindowLong(hwnd, GWL_STYLE, style);
-
-            // convert coords to parent-relative coords
-            uint dpi = GetDpiForWindow(hwnd);
-            _windowsScalingFactor = dpi / 96.0;
-            POINT pt = new POINT
+            catch (Exception ex)
             {
-                X = (int)(Instance.PosX * _windowsScalingFactor),
-                Y = (int)(Instance.PosY * _windowsScalingFactor)
-            };
-            ScreenToClient(shellView, ref pt);
-
-            SetWindowPos(hwnd, IntPtr.Zero,
-                         pt.X, pt.Y,
-                         0, 0,
-                         SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_SHOWWINDOW);
+                App.LogCrashShield("SetAsDesktopChild", ex);
+            }
         }
 
         public async Task AdjustPositionAsync()
@@ -1439,23 +1522,33 @@ namespace DeskFrame
         }
         public async void AdjustPosition()
         {
-            SetParent(hwnd, IntPtr.Zero);
-            SetAsDesktopChild();
-            if (Instance.Minimized)
+            try
             {
-                this.Height = titleBar.Height;
-            }
-            var interopHelper = new WindowInteropHelper(this);
-            interopHelper.EnsureHandle();
-            IntPtr _hwnd = interopHelper.Handle;
-            double currentScale = GetDpiForWindow(_hwnd) / 96.0;
-            if (_windowsScalingFactor != currentScale)
-            {
-                _windowsScalingFactor = currentScale;
-                foreach (var item in FileItems)
+                SetParent(hwnd, IntPtr.Zero);
+                SetAsDesktopChild();
+                if (Instance.Minimized)
                 {
-                    item.Thumbnail = await GetThumbnailAsync(item.FullPath!);
+                    this.Height = titleBar.Height;
                 }
+                var interopHelper = new WindowInteropHelper(this);
+                interopHelper.EnsureHandle();
+                IntPtr _hwnd = interopHelper.Handle;
+                if (_hwnd == IntPtr.Zero) return;
+
+                uint dpi = GetDpiForWindow(_hwnd);
+                double currentScale = dpi > 0 ? dpi / 96.0 : 1.0;
+                if (_windowsScalingFactor != currentScale)
+                {
+                    _windowsScalingFactor = currentScale;
+                    foreach (var item in FileItems.ToList())
+                    {
+                        item.Thumbnail = await GetThumbnailAsync(item.FullPath!);
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                App.LogCrashShield("AdjustPosition", ex);
             }
         }
 
@@ -1661,35 +1754,77 @@ namespace DeskFrame
             }
         }
 
+        private void ApplyWindowChromeSafe()
+        {
+            try
+            {
+                if (!Interop.IsDwmCompositionEnabled())
+                {
+                    if (Instance.Name != "empty")
+                    {
+                        _ = Task.Run(async () =>
+                        {
+                            for (int i = 0; i < 20; i++)
+                            {
+                                await Task.Delay(300);
+                                if (Interop.IsDwmCompositionEnabled())
+                                {
+                                    _ = Dispatcher.InvokeAsync(() =>
+                                    {
+                                        try { ApplyWindowChromeSafe(); } catch { }
+                                    });
+                                    break;
+                                }
+                            }
+                        });
+                    }
+                    return;
+                }
+
+                WindowChrome.SetWindowChrome(this, Instance.IsLocked ?
+                    new WindowChrome
+                    {
+                        ResizeBorderThickness = new Thickness(0),
+                        CaptionHeight = 0,
+                        CornerRadius = new CornerRadius(0)
+                    } :
+                    new WindowChrome
+                    {
+                        GlassFrameThickness = new Thickness(0),
+                        CaptionHeight = 0,
+                        ResizeBorderThickness = new Thickness(5),
+                        CornerRadius = new CornerRadius(0)
+                    }
+                );
+            }
+            catch (Exception ex)
+            {
+                App.LogCrashShield("ApplyWindowChromeSafe", ex);
+            }
+        }
+
         protected override void OnSourceInitialized(EventArgs e)
         {
             base.OnSourceInitialized(e);
-            IntPtr hwnd = new WindowInteropHelper(this).Handle;
-            int exStyle = (int)Interop.GetWindowLong(hwnd, Interop.GWL_EXSTYLE);
-            Interop.SetWindowLong(hwnd, Interop.GWL_EXSTYLE, exStyle | Interop.WS_EX_NOACTIVATE);
-            WindowChrome.SetWindowChrome(this, Instance.IsLocked ?
-                new WindowChrome
-                {
-                    ResizeBorderThickness = new Thickness(0),
-                    CaptionHeight = 0,
-                    CornerRadius = new CornerRadius(0)
-                } :
-                new WindowChrome
-                {
-                    GlassFrameThickness = new Thickness(0),
-                    CaptionHeight = 0,
-                    ResizeBorderThickness = new Thickness(5),
-                    CornerRadius = new CornerRadius(0)
-                }
-            );
-            KeepWindowBehind();
-            SetAsDesktopChild();
-            SetNoActivate();
-            SetAsToolWindow();
-            HwndSource source = HwndSource.FromHwnd(new WindowInteropHelper(this).Handle);
-            source.AddHook(WndProc);
-            MouseLeaveWindow(false);
-            FileListView.ItemContainerGenerator.StatusChanged += ItemContainerGenerator_StatusChanged;
+            try
+            {
+                IntPtr hwnd = new WindowInteropHelper(this).Handle;
+                int exStyle = (int)Interop.GetWindowLong(hwnd, Interop.GWL_EXSTYLE);
+                Interop.SetWindowLong(hwnd, Interop.GWL_EXSTYLE, exStyle | Interop.WS_EX_NOACTIVATE);
+                ApplyWindowChromeSafe();
+                KeepWindowBehind();
+                SetAsDesktopChild();
+                SetNoActivate();
+                SetAsToolWindow();
+                HwndSource? source = HwndSource.FromHwnd(hwnd);
+                source?.AddHook(WndProc);
+                MouseLeaveWindow(false);
+                FileListView.ItemContainerGenerator.StatusChanged += ItemContainerGenerator_StatusChanged;
+            }
+            catch (Exception ex)
+            {
+                App.LogCrashShield("DeskFrameWindow.OnSourceInitialized", ex);
+            }
         }
         private void ItemContainerGenerator_StatusChanged(object sender, EventArgs e)
         {
@@ -2389,31 +2524,24 @@ namespace DeskFrame
         private void ToggleHiddenFiles() => Instance.ShowHiddenFiles = !Instance.ShowHiddenFiles;
         private void ToggleIsLocked()
         {
-            Instance.IsLocked = !Instance.IsLocked;
-            var interopHelper = new WindowInteropHelper(this);
-            interopHelper.EnsureHandle();
-            IntPtr hwnd = interopHelper.Handle;
-            SetParent(hwnd, IntPtr.Zero);
-            WindowChrome.SetWindowChrome(this, Instance.IsLocked ?
-                new WindowChrome
-                {
-                    ResizeBorderThickness = new Thickness(0),
-                    CaptionHeight = 0,
-                    CornerRadius = new CornerRadius(0)
-                } :
-                new WindowChrome
-                {
-                    GlassFrameThickness = new Thickness(0),
-                    CaptionHeight = 0,
-                    ResizeBorderThickness = new Thickness(5),
-                    CornerRadius = new CornerRadius(0)
-                }
-            );
-            SetAsDesktopChild();
-            HandleWindowMove(true);
+            try
+            {
+                Instance.IsLocked = !Instance.IsLocked;
+                var interopHelper = new WindowInteropHelper(this);
+                interopHelper.EnsureHandle();
+                IntPtr hwnd = interopHelper.Handle;
+                SetParent(hwnd, IntPtr.Zero);
+                ApplyWindowChromeSafe();
+                SetAsDesktopChild();
+                HandleWindowMove(true);
 
-            this.Width += 1;
-            this.Width -= 1;
+                this.Width += 1;
+                this.Width -= 1;
+            }
+            catch (Exception ex)
+            {
+                App.LogCrashShield("ToggleIsLocked", ex);
+            }
         }
         private void ToggleFileExtension() => Instance.ShowFileExtension = !Instance.ShowFileExtension;
 
@@ -4275,53 +4403,61 @@ namespace DeskFrame
 
         private void Window_MouseMove(object sender, MouseEventArgs e)
         {
-            // Drag threshold: only start drag after mouse moves far enough from the click point
-            if (_pendingDragItem != null && _pendingDragBorder != null)
+            try
             {
-                if (e.LeftButton == MouseButtonState.Pressed)
+                // Drag threshold: only start drag after mouse moves far enough from the click point
+                if (_pendingDragItem != null && _pendingDragBorder != null)
                 {
-                    System.Windows.Point currentPos = e.GetPosition(this);
-                    double deltaX = Math.Abs(currentPos.X - _dragStartPoint.X);
-                    double deltaY = Math.Abs(currentPos.Y - _dragStartPoint.Y);
-
-                    if (deltaX > SystemParameters.MinimumHorizontalDragDistance ||
-                        deltaY > SystemParameters.MinimumVerticalDragDistance)
+                    if (e.LeftButton == MouseButtonState.Pressed)
                     {
-                        // Threshold exceeded — start the actual drag
-                        var dragItem = _pendingDragItem;
-                        var dragBorder = _pendingDragBorder;
+                        System.Windows.Point currentPos = e.GetPosition(this);
+                        double deltaX = Math.Abs(currentPos.X - _dragStartPoint.X);
+                        double deltaY = Math.Abs(currentPos.Y - _dragStartPoint.Y);
+
+                        if (deltaX > SystemParameters.MinimumHorizontalDragDistance ||
+                            deltaY > SystemParameters.MinimumVerticalDragDistance)
+                        {
+                            // Threshold exceeded — start the actual drag
+                            var dragItem = _pendingDragItem;
+                            var dragBorder = _pendingDragBorder;
+                            _pendingDragItem = null;
+                            _pendingDragBorder = null;
+                            _isDragging = true;
+
+                            DataObject data = new DataObject(DataFormats.FileDrop, new string[] { dragItem.FullPath! });
+                            DragDrop.DoDragDrop(dragBorder, data, DragDropEffects.Copy | DragDropEffects.Move);
+                        }
+                    }
+                    else
+                    {
+                        // Mouse button released without moving — cancel pending drag (it was just a click)
                         _pendingDragItem = null;
                         _pendingDragBorder = null;
-                        _isDragging = true;
-
-                        DataObject data = new DataObject(DataFormats.FileDrop, new string[] { dragItem.FullPath! });
-                        DragDrop.DoDragDrop(dragBorder, data, DragDropEffects.Copy | DragDropEffects.Move);
                     }
                 }
-                else
+
+                if (PresentationSource.FromVisual(this) == null) return;
+                var cursorPos = System.Windows.Forms.Cursor.Position;
+                var windowPos = this.PointToScreen(new System.Windows.Point(0, 0));
+                var windowWidth = this.ActualWidth;
+                var windowHeight = this.ActualHeight;
+                if (cursorPos.X - 10 < windowPos.X || cursorPos.X + 10 > windowPos.X + windowWidth ||
+                    cursorPos.Y - 10 < windowPos.Y || cursorPos.Y + 10 > windowPos.Y + windowHeight)
                 {
-                    // Mouse button released without moving — cancel pending drag (it was just a click)
-                    _pendingDragItem = null;
-                    _pendingDragBorder = null;
+                    if (!_contextMenuIsOpen && !_mouseIsOver)
+                    {
+                        _selectedItems.Clear();
+                        foreach (var fileItem in FileItems)
+                        {
+                            fileItem.IsSelected = false;
+                            fileItem.Background = Brushes.Transparent;
+                        }
+                    }
                 }
             }
-
-            var cursorPos = System.Windows.Forms.Cursor.Position;
-            var windowPos = this.PointToScreen(new System.Windows.Point(0, 0));
-            var windowWidth = this.ActualWidth;
-            var windowHeight = this.ActualHeight;
-            if (cursorPos.X - 10 < windowPos.X || cursorPos.X + 10 > windowPos.X + windowWidth ||
-                cursorPos.Y - 10 < windowPos.Y || cursorPos.Y + 10 > windowPos.Y + windowHeight)
+            catch (Exception ex)
             {
-                if (!_contextMenuIsOpen && !_mouseIsOver)
-                {
-                    _selectedItems.Clear();
-                    foreach (var fileItem in FileItems)
-                    {
-                        fileItem.IsSelected = false;
-                        fileItem.Background = Brushes.Transparent;
-                    }
-                }
+                App.LogCrashShield("Window_MouseMove", ex);
             }
         }
 
@@ -4374,23 +4510,30 @@ namespace DeskFrame
                 }
                 VirtualDesktop.CurrentChanged += (sender, args) =>
                 {
-                    var newDesktop = args.NewDesktop;
-                    _currentVD = Array.IndexOf(VirtualDesktop.GetDesktops(), newDesktop) + 1;
-                    if (Instance.ShowOnVirtualDesktops != null && Instance.ShowOnVirtualDesktops.Length != 0 && !Instance.ShowOnVirtualDesktops.Contains(_currentVD))
+                    try
                     {
-                        Dispatcher.InvokeAsync(() =>
+                        var newDesktop = args.NewDesktop;
+                        _currentVD = Array.IndexOf(VirtualDesktop.GetDesktops(), newDesktop) + 1;
+                        if (Instance.ShowOnVirtualDesktops != null && Instance.ShowOnVirtualDesktops.Length != 0 && !Instance.ShowOnVirtualDesktops.Contains(_currentVD))
                         {
-                            this.Hide();
-                        });
+                            Dispatcher.InvokeAsync(() =>
+                            {
+                                try { this.Hide(); } catch { }
+                            });
+                        }
+                        else
+                        {
+                            Dispatcher.InvokeAsync(() =>
+                            {
+                                try { this.Show(); } catch { }
+                            });
+                        }
+                        Debug.WriteLine($"Switched to virtual desktop: {_currentVD}");
                     }
-                    else
+                    catch (Exception ex)
                     {
-                        Dispatcher.InvokeAsync(() =>
-                        {
-                            this.Show();
-                        });
+                        App.LogCrashShield("VirtualDesktop.CurrentChanged", ex);
                     }
-                    Debug.WriteLine($"Switched to virtual desktop: {_currentVD}");
                 };
                 VirtualDesktopSupported = true;
             }

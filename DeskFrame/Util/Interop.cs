@@ -194,6 +194,31 @@ namespace DeskFrame.Util
         [DllImport("dwmapi.dll")]
         public static extern int DwmExtendFrameIntoClientArea(IntPtr hwnd, ref MARGINS margins);
 
+        [DllImport("dwmapi.dll", PreserveSig = true)]
+        public static extern int DwmIsCompositionEnabled([MarshalAs(UnmanagedType.Bool)] out bool pfEnabled);
+
+        public static bool IsDwmCompositionEnabled()
+        {
+            try
+            {
+                return DwmIsCompositionEnabled(out bool enabled) == 0 && enabled;
+            }
+            catch
+            {
+                return false;
+            }
+        }
+
+        public const uint RESTART_NO_CRASH = 1;
+        public const uint RESTART_NO_HANG = 2;
+        public const uint RESTART_NO_PATCH = 4;
+        public const uint RESTART_NO_REBOOT = 8;
+
+        [DllImport("kernel32.dll", CharSet = CharSet.Unicode)]
+        public static extern int RegisterApplicationRestart(
+            [MarshalAs(UnmanagedType.LPWStr)] string? pwzCommandline,
+            uint dwFlags);
+
         public enum AccentState
         {
             ACCENT_DISABLED = 0,

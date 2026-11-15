@@ -17,6 +17,7 @@ namespace DeskFrame
         bool startOnLogin;
         bool reseted = false;
         private uint _taskbarRestartMessage;
+        private CancellationTokenSource? _displayRecoveryCts;
         public static InstanceController _controller;
         private LowLevelMouseHook _lowLevelMouseHook;
         private static bool _doubleClickToHide;
@@ -71,36 +72,64 @@ namespace DeskFrame
         }
         private void HandleGlobalDoubleClick(object? sender, MouseEventArgs e)
         {
-            if (e.Keys.ToString() != "MouseLeft") return;
-            if ((DateTime.Now - _lastDoubleClickTime).TotalSeconds < 0.3) return;
-            _lastDoubleClickTime = DateTime.Now;
-
-            POINT pt = new POINT { X = e.Position.X, Y = e.Position.Y };
-            IntPtr hwndUnderCursor = WindowFromPoint(pt);
-            IntPtr desktopListView = GetDesktopListViewHandle();
-
-            if (hwndUnderCursor == desktopListView && !IsDesktopIconHit(pt))
+            try
             {
-                Application.Current.Dispatcher.Invoke(() =>
+                if (e.Keys.ToString() != "MouseLeft") return;
+                if ((DateTime.Now - _lastDoubleClickTime).TotalSeconds < 0.3) return;
+                _lastDoubleClickTime = DateTime.Now;
+
+                POINT pt = new POINT { X = e.Position.X, Y = e.Position.Y };
+                IntPtr hwndUnderCursor = WindowFromPoint(pt);
+                IntPtr desktopListView = GetDesktopListViewHandle();
+
+                if (hwndUnderCursor != IntPtr.Zero && hwndUnderCursor == desktopListView && !IsDesktopIconHit(pt))
                 {
-                    _controller.ChangeVisibility();
-                });
+                    Application.Current?.Dispatcher.BeginInvoke(() =>
+                    {
+                        try
+                        {
+                            _controller.ChangeVisibility();
+                        }
+                        catch (Exception ex)
+                        {
+                            App.LogCrashShield("HandleGlobalDoubleClick.Dispatcher", ex);
+                        }
+                    });
+                }
+            }
+            catch (Exception ex)
+            {
+                App.LogCrashShield("HandleGlobalDoubleClick", ex);
             }
         }
 
         private static bool IsDesktopIconHit(POINT screenPt)
         {
-            var element = AutomationElement.FromPoint(new System.Windows.Point(screenPt.X, screenPt.Y));
-            if (element.Current.ControlType == ControlType.ListItem)
+            try
             {
-                return true;
+                var element = AutomationElement.FromPoint(new System.Windows.Point(screenPt.X, screenPt.Y));
+                if (element != null && element.Current.ControlType == ControlType.ListItem)
+                {
+                    return true;
+                }
+            }
+            catch
+            {
+                // UIAutomation can throw ElementNotAvailableException or COMException during fullscreen game transitions
             }
             return false;
         }
 
         private async void Update()
         {
-            await Updater.CheckUpdateAsync(url, false);
+            try
+            {
+                await Updater.CheckUpdateAsync(url, false);
+            }
+            catch (Exception ex)
+            {
+                App.LogCrashShield("MainWindow.Update", ex);
+            }
         }
 
         private void addDesktopFrame_Click(object sender, RoutedEventArgs e)
@@ -245,53 +274,128 @@ namespace DeskFrame
         }
         private IntPtr WndProc(IntPtr hwnd, int msg, IntPtr wParam, IntPtr lParam, ref bool handled)
         {
-            if (msg == _taskbarRestartMessage)
+            try
             {
-                // always recreate on UI thread
-                Application.Current.Dispatcher.Invoke(() =>
+                if (msg == _taskbarRestartMessage && _taskbarRestartMessage != 0)
                 {
-                    TrayIcon.Register();
-                    if (!_controller.isInitializingInstances)
-                        _controller.CheckFrameWindowsLive();
-                });
-            }
-            if (msg == 0x007E) // WM_DISPLAYCHANGE   
-            {
-                if (!_controller.isInitializingInstances)
+                    ScheduleDisplayRecovery(500, reRegisterTray: true);
+                }
+                else if (msg == 0x007E) // WM_DISPLAYCHANGE
                 {
-                    // System.Windows.Forms.MessageBox.Show("ee");
-
-                    _controller.CheckFrameWindowsLive();
-                    Thread.Sleep(200);
-                    DummyWindow();
                     reseted = true;
+                    ScheduleDisplayRecovery(600);
+                }
+                else if (msg == 0x001C && reseted) // WM_WININICHANGE
+                {
+                    reseted = false;
+                    ScheduleDisplayRecovery(600);
+                }
+                else if (msg == 0x031E) // WM_DWMCOMPOSITIONCHANGED
+                {
+                    ScheduleDisplayRecovery(800);
                 }
             }
-            if (msg == 0x001C && reseted) // WM_WININICHANGE  
+            catch (Exception ex)
             {
-                if (!_controller.isInitializingInstances)
-                {
-
-                    reseted = false;
-                    _controller.CheckFrameWindowsLive();
-                    Thread.Sleep(200);
-                    DummyWindow();
-                }
+                App.LogCrashShield("MainWindow.WndProc", ex);
             }
             return IntPtr.Zero;
         }
+
+        public void ScheduleDisplayRecovery(int delayMs = 600, bool reRegisterTray = false)
+        {
+            try
+            {
+                _displayRecoveryCts?.Cancel();
+                _displayRecoveryCts?.Dispose();
+            }
+            catch { }
+
+            var cts = new CancellationTokenSource();
+            _displayRecoveryCts = cts;
+            var token = cts.Token;
+
+            _ = Task.Run(async () =>
+            {
+                try
+                {
+                    await Task.Delay(delayMs, token);
+
+                    // Wait until DWM composition is back online (up to ~6 seconds if dwm.exe crashed/restarted)
+                    for (int attempt = 0; attempt < 20; attempt++)
+                    {
+                        if (token.IsCancellationRequested) return;
+                        if (IsDwmCompositionEnabled()) break;
+                        await Task.Delay(300, token);
+                    }
+
+                    if (token.IsCancellationRequested) return;
+
+                    var app = Application.Current;
+                    if (app == null) return;
+
+                    await app.Dispatcher.InvokeAsync(() =>
+                    {
+                        try
+                        {
+                            if (reRegisterTray)
+                            {
+                                try { TrayIcon.Register(); } catch { }
+                            }
+
+                            if (!_controller.isInitializingInstances)
+                            {
+                                _controller.CheckFrameWindowsLive();
+                                if (IsDwmCompositionEnabled())
+                                {
+                                    DummyWindow();
+                                }
+                            }
+                        }
+                        catch (Exception ex)
+                        {
+                            App.LogCrashShield("ScheduleDisplayRecovery.Dispatcher", ex);
+                        }
+                    }, System.Windows.Threading.DispatcherPriority.Background);
+                }
+                catch (OperationCanceledException)
+                {
+                }
+                catch (Exception ex)
+                {
+                    App.LogCrashShield("ScheduleDisplayRecovery", ex);
+                }
+            }, token);
+        }
+
         private void DummyWindow()
         {
-            var window = new DeskFrameWindow(new Instance("empty", false))
+            if (!IsDwmCompositionEnabled()) return;
+
+            DeskFrameWindow? window = null;
+            try
             {
-                MinHeight = 1,
-                MinWidth = 1,
-                Height = 1,
-                Width = 1,
-                Opacity = 0,
-            };
-            window.Show();
-            window.Close();
+                window = new DeskFrameWindow(new Instance("empty", false))
+                {
+                    MinHeight = 1,
+                    MinWidth = 1,
+                    Height = 1,
+                    Width = 1,
+                    Opacity = 0,
+                };
+                window.Show();
+            }
+            catch (Exception ex)
+            {
+                App.LogCrashShield("DummyWindow", ex);
+            }
+            finally
+            {
+                if (window != null)
+                {
+                    try { window.Close(); } catch { }
+                }
+            }
         }
         protected override void OnClosed(EventArgs e)
         {

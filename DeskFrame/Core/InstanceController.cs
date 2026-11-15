@@ -221,58 +221,87 @@ public class InstanceController
     }
     public void CheckFrameWindowsLive(bool forceFullReload = false)
     {
-        int closedCount = 0;
-        foreach (var window in _subWindows)
+        try
         {
-            if (new WindowInteropHelper(window).Handle == IntPtr.Zero) closedCount++;
-        }
-        if (forceFullReload || (_subWindows.Count != 0 && !isInitializingInstances))
-        {
-            if (forceFullReload)
+            var windowsSnapshot = _subWindows.ToList();
+            int closedCount = 0;
+            foreach (var window in windowsSnapshot)
             {
-                int registryInstanceCount = 0;
                 try
                 {
-                    using (RegistryKey instancesKey = Registry.CurrentUser.OpenSubKey(@$"SOFTWARE\{appName}\Instances"))
+                    if (new WindowInteropHelper(window).Handle == IntPtr.Zero) closedCount++;
+                }
+                catch
+                {
+                    closedCount++;
+                }
+            }
+            if (forceFullReload || (windowsSnapshot.Count != 0 && !isInitializingInstances))
+            {
+                if (forceFullReload)
+                {
+                    int registryInstanceCount = 0;
+                    try
                     {
-                        if (instancesKey != null)
+                        using (RegistryKey instancesKey = Registry.CurrentUser.OpenSubKey(@$"SOFTWARE\{appName}\Instances"))
                         {
-                            registryInstanceCount = instancesKey.GetSubKeyNames().Length;
+                            if (instancesKey != null)
+                            {
+                                registryInstanceCount = instancesKey.GetSubKeyNames().Length;
+                            }
+                        }
+                    }
+                    catch { }
+
+                    if (registryInstanceCount == windowsSnapshot.Count && registryInstanceCount > 0 && closedCount == 0)
+                    {
+                        // Tải lại files mượt mà không cần hủy/tạo lại window
+                        foreach (var window in windowsSnapshot)
+                        {
+                            try
+                            {
+                                window.LoadFiles(window._currentFolderPath);
+                                window.AdjustPosition();
+                            }
+                            catch (Exception ex)
+                            {
+                                App.LogCrashShield("CheckFrameWindowsLive.Reload", ex);
+                            }
+                        }
+                        return;
+                    }
+                }
+
+                if (forceFullReload || closedCount == windowsSnapshot.Count)
+                {
+                    foreach (var window in windowsSnapshot)
+                    {
+                        try { window.Close(); } catch { }
+                    }
+                    _subWindows.Clear();
+                    _subWindowsPtr.Clear();
+                    Instances.Clear();
+                    InitInstances();
+                }
+                else
+                {
+                    foreach (var window in windowsSnapshot)
+                    {
+                        try
+                        {
+                            window.AdjustPosition();
+                        }
+                        catch (Exception ex)
+                        {
+                            App.LogCrashShield("CheckFrameWindowsLive.AdjustPosition", ex);
                         }
                     }
                 }
-                catch { }
-
-                if (registryInstanceCount == _subWindows.Count && registryInstanceCount > 0)
-                {
-                    // Tải lại files mượt mà không cần hủy/tạo lại window
-                    foreach (var window in _subWindows)
-                    {
-                        window.LoadFiles(window._currentFolderPath);
-                        window.AdjustPosition();
-                    }
-                    return;
-                }
             }
-
-            if (forceFullReload || closedCount == _subWindows.Count)
-            {
-                foreach (var window in _subWindows)
-                {
-                    window.Close();
-                }
-                _subWindows.Clear();
-                _subWindowsPtr.Clear();
-                Instances.Clear();
-                InitInstances();
-            }
-            if (closedCount != _subWindows.Count)
-            {
-                foreach (var window in _subWindows)
-                {
-                    window.AdjustPosition();
-                }
-            }
+        }
+        catch (Exception ex)
+        {
+            App.LogCrashShield("CheckFrameWindowsLive", ex);
         }
     }
     public void ChangeVisibility()
